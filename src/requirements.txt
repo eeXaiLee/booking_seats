@@ -1,0 +1,26 @@
+fastapi==0.115.0 # Веб-фреймворк
+uvicorn[standard]==0.32.0 # ASGI-сервер с поддержкой HTTP/2 и uvloop
+python-dotenv>=1.0.0 # Чтение .env-файлов
+pydantic==2.12.5 # Валидация данных, схемы входа/выхода
+sqlalchemy==2.0.36 # ORM для работы с PostgreSQL
+asyncpg==0.29.0 # Асинхронный драйвер для PostgreSQL (быстрее, чем psycopg2)
+psycopg2-binary==2.9.9 # Синхронный драйвер — нужен для Alembic (миграции)
+passlib[bcrypt]==1.7.4 # Хеширование паролей (bcrypt)
+python-jose[cryptography]==3.3.0 # Генерация и проверка JWT-токенов
+python-multipart==0.0.9 # Поддержка multipart/form-data (нужна для /media загрузки файлов)
+alembic==1.13.1 # Миграции базы данных
+loguru==0.7.2 # Красивое и удобное логирование (по желанию)
+pillow==12.1.1 # Работа с изображениями
+uuid==1.30 # Работа с универсальными уникальными идентификаторами (UUID)
+aiofiles==25.1.0 # Для асинхронной работы с файлами
+aio-pika==9.5.0 # Асинхронный клиент для RabbitMQ
+pydantic-settings==2.13.1 # Управление конфигами
+dependency-injector==4.48.3 # Управление зависимостями
+ruff==0.11.11
+pre-commit==4.2.0
+email-validator==2.3.0
+celery==5.6.2
+flower==2.0.1
+pytest==8.3.4
+pytest-asyncio==0.25.2
+httpx==0.27.2

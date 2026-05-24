@@ -1,0 +1,159 @@
+name: booking-cafe-backend
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    env_file:
+      - ./.env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_started
+    networks:
+      - backend
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    env_file:
+      - ./.env
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:${POSTGRES_PORT}"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB" ]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    hostname: rabbitmq
+    env_file:
+      - ./.env
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST}
+    ports:
+      - "${RABBITMQ_PORT}:${RABBITMQ_PORT}"
+      - "${RABBITMQ_MANAGEMENT_PORT}:${RABBITMQ_MANAGEMENT_PORT}"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: [ "CMD-SHELL", "rabbitmq-diagnostics ping || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - backend
+
+  app:
+    image: ${DOCKERHUB_USERNAME}/booking_app:latest
+    command: >
+      sh -c "
+      alembic upgrade head &&
+      uvicorn src.main:app --host 0.0.0.0 --port ${APP_PORT}
+      "
+    env_file:
+      - ./.env
+    environment:
+      PYTHONPATH: /app/src
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./media:/app/media
+    networks:
+      - backend
+    restart: unless-stopped
+
+  celery_worker:
+    image: ${DOCKERHUB_USERNAME}/booking_app:latest
+    command: celery -A celery_app.worker worker -l info
+    env_file:
+      - ./.env
+    environment:
+      PYTHONPATH: /app/src
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  celery_beat:
+    image: ${DOCKERHUB_USERNAME}/booking_app:latest
+    command: celery -A celery_app.worker beat -l info
+    env_file:
+      - ./.env
+    environment:
+      PYTHONPATH: /app/src
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  flower:
+    image: ${DOCKERHUB_USERNAME}/booking_app:latest
+    command: >
+      sh -c '
+      BROKER_API="${FLOWER_BROKER_API:-http://$$RABBITMQ_USER:$$RABBITMQ_PASS@$$DOCKER_RABBITMQ_HOST:$$RABBITMQ_MANAGEMENT_PORT/api/}" &&
+      celery -A celery_app.worker flower
+      --port=$$FLOWER_PORT
+      $${FLOWER_BASIC_AUTH:+--basic-auth=$$FLOWER_BASIC_AUTH}
+      --broker-api="$$BROKER_API"
+      $${FLOWER_URL_PREFIX:+--url-prefix=$$FLOWER_URL_PREFIX}'
+    env_file:
+      - ./.env
+    environment:
+      PYTHONPATH: /app/src
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
+    ports:
+      - "${FLOWER_PORT}:${FLOWER_PORT}"
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pgdata:
+  rabbitmq_data:
+
+networks:
+  backend:
+    driver: bridge

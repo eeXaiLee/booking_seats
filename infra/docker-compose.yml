@@ -1,0 +1,161 @@
+name: booking-cafe-backend
+
+services:
+  db:
+    image: postgres:17-alpine
+    env_file:
+      - ./.env
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT}:${POSTGRES_PORT}"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data/pgdata
+      - ./postgres.conf:/etc/postgresql/postgresql.conf:ro
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    hostname: rabbitmq
+    env_file:
+      - ./.env
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST}
+    ports:
+      - "${RABBITMQ_PORT}:${RABBITMQ_PORT}"
+      - "${RABBITMQ_MANAGEMENT_PORT}:${RABBITMQ_MANAGEMENT_PORT}"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "rabbitmq-diagnostics ping || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - backend
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: booking-cafe-app:latest
+    command: >
+      sh -c "
+      alembic upgrade head &&
+      uvicorn src.main:app --host 0.0.0.0 --port ${APP_PORT} --reload
+      "
+    env_file:
+      - ./.env
+    environment:
+      PYTHONPATH: /app/src
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
+      PYTHONPATH: /app/src   # ДОБАВИТЬ
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT}:${APP_PORT}"
+    volumes:
+      - ./media:/app/media
+      - ../src:/app/src
+    networks:
+      - backend
+    restart: unless-stopped
+
+  celery_worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: booking-cafe-celery:latest
+    command: celery -A celery_app.worker worker -l info
+    env_file:
+      - ./.env
+    environment:
+      PYTHONPATH: /app/src
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
+      PYTHONPATH: /app/src   # ДОБАВИТЬ
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  celery_beat:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: booking-cafe-celery:latest
+    command: celery -A celery_app.worker beat -l info
+    env_file:
+      - ./.env
+    environment:
+      PYTHONPATH: /app/src
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
+      PYTHONPATH: /app/src   # ДОБАВИТЬ
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  flower:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: booking-cafe-celery:latest
+    command: >
+      sh -c '
+      BROKER_API="${FLOWER_BROKER_API:-http://$$RABBITMQ_USER:$$RABBITMQ_PASS@$$DOCKER_RABBITMQ_HOST:$$RABBITMQ_MANAGEMENT_PORT/api/}" &&
+      celery -A celery_app.worker flower
+      --port=$$FLOWER_PORT
+      $${FLOWER_BASIC_AUTH:+--basic-auth=$$FLOWER_BASIC_AUTH}
+      --broker-api="$$BROKER_API"
+      $${FLOWER_URL_PREFIX:+--url-prefix=$$FLOWER_URL_PREFIX}'
+    env_file:
+      - ./.env
+    environment:
+      PYTHONPATH: /app/src
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
+      PYTHONPATH: /app/src   # ДОБАВИТЬ
+    ports:
+      - "${FLOWER_PORT}:${FLOWER_PORT}"
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  rabbitmq_data:
+
+networks:
+  backend:
+    driver: bridge

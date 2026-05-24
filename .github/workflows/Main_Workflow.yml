@@ -1,0 +1,178 @@
+name: Main Bookinng Tabels Workflow1
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - master
+      - develop
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - master
+      - develop
+# on:
+#   push:
+#     branches-ignore:
+#       - main
+#       - master
+
+jobs:
+  Ruff_check_and_tests:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ${{ secrets.DB_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.DB_NAME }}
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd=pg_isready
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Create CI .env
+        env:
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+        run: |
+          cp ./infra/.env.example infra/.env
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          env_path = Path('infra/.env')
+          replacements = {
+            'POSTGRES_USER': os.environ['DB_USER'],
+            'POSTGRES_PASSWORD': os.environ['DB_PASSWORD'],
+            'POSTGRES_DB': os.environ['DB_NAME'],
+            'POSTGRES_HOST': 'localhost',
+            'POSTGRES_PORT': '5432',
+          }
+
+          lines = env_path.read_text(encoding='utf-8').splitlines()
+          updated_lines = []
+          seen_keys = set()
+
+          for line in lines:
+            if '=' not in line or line.lstrip().startswith('#'):
+              updated_lines.append(line)
+              continue
+
+            key, _ = line.split('=', 1)
+            if key in replacements:
+              updated_lines.append(f'{key}={replacements[key]}')
+              seen_keys.add(key)
+            else:
+              updated_lines.append(line)
+
+          for key, value in replacements.items():
+            if key not in seen_keys:
+              updated_lines.append(f'{key}={value}')
+
+          env_path.write_text('\n'.join(updated_lines) + '\n', encoding='utf-8')
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/requirements.txt
+          pip install -e .
+
+      - name: Apply database migrations
+        run: alembic upgrade head
+
+      - name: Check code style
+        run: python -m ruff check ./src
+
+      - name: Run tests
+        run: pytest -xvs tests/
+
+  build_and_push_to_docker_hub:
+    runs-on: ubuntu-latest
+    needs: Ruff_check_and_tests
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref == 'develop' && github.event.pull_request.merged == true
+    steps:
+        - name: Checkout repository code
+          uses: actions/checkout@v4
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@v3
+        - name: Login to Doker Hub
+          uses: docker/login-action@v3
+          with:
+            username: ${{ secrets.DOCKERHUB_USERNAME }}
+            password: ${{ secrets.DOCKER_PASSWORD }}
+        - name: Push to DockerHub
+          uses: docker/build-push-action@v5
+          with:
+            context: .
+            push: true
+            tags: ${{ secrets.DOCKERHUB_USERNAME }}/booking_app:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build_and_push_to_docker_hub
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref == 'develop' && github.event.pull_request.merged == true
+    steps: 
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+      - name: Copy production infra files via password
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          password: ${{ secrets.PASSWORD }}
+          source: ./infra/docker-compose.production.yml,./infra/Caddyfile
+          target: "booking_app"
+      - name: Executing remote ssh commands to deploy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          password: ${{ secrets.PASSWORD }}
+          script: |
+            set -e
+            cd booking_app/infra
+            [ -f .env ]
+            read_env_var() {
+              grep -E "^$1=" .env | tail -n 1 | cut -d= -f2-
+            }
+            for var in APP_DOMAIN RABBITMQ_USER RABBITMQ_PASS DOCKERHUB_USERNAME POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_HOST POSTGRES_PORT; do
+              value=$(read_env_var "$var")
+              if [ -z "$value" ]; then
+                echo "Missing required env var: ${var}"
+                exit 1
+              fi
+            done
+            dockerhub_username=$(read_env_var DOCKERHUB_USERNAME)
+            dockerhub_token=$(read_env_var DOCKERHUB_TOKEN)
+            dockerhub_password=$(read_env_var DOCKER_PASSWORD)
+            if [ -n "$dockerhub_username" ]; then
+              dockerhub_secret="$dockerhub_token"
+              if [ -z "$dockerhub_secret" ]; then
+                dockerhub_secret="$dockerhub_password"
+              fi
+              if [ -n "$dockerhub_secret" ]; then
+                printf '%s' "$dockerhub_secret" | sudo docker login -u "$dockerhub_username" --password-stdin
+              fi
+            fi
+            sudo docker compose --env-file .env -f docker-compose.production.yml config -q
+            sudo docker compose --env-file .env -f docker-compose.production.yml down
+            sudo docker compose --env-file .env -f docker-compose.production.yml pull
+            sudo docker compose --env-file .env -f docker-compose.production.yml up -d --remove-orphans
