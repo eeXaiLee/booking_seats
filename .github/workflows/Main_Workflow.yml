@@ -2,21 +2,8 @@ name: Main Bookinng Tabels Workflow1
 
 on:
   push:
-    branches-ignore:
-      - main
-      - master
-      - develop
-  pull_request:
-    types: [closed]
     branches:
       - main
-      - master
-      - develop
-# on:
-#   push:
-#     branches-ignore:
-#       - main
-#       - master
 
 jobs:
   Ruff_check_and_tests:
@@ -107,7 +94,7 @@ jobs:
   build_and_push_to_docker_hub:
     runs-on: ubuntu-latest
     needs: Ruff_check_and_tests
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref == 'develop' && github.event.pull_request.merged == true
+    if: github.ref == 'refs/heads/main'
     steps:
         - name: Checkout repository code
           uses: actions/checkout@v4
@@ -128,7 +115,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build_and_push_to_docker_hub
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.base_ref == 'develop' && github.event.pull_request.merged == true
+    if: github.ref == 'refs/heads/main'
     steps: 
       - name: Checkout repository code
         uses: actions/checkout@v4
@@ -138,8 +125,8 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USER }}
           password: ${{ secrets.PASSWORD }}
-          source: ./infra/docker-compose.production.yml,./infra/Caddyfile
-          target: "booking_app"
+          source: ./infra/docker-compose.production.yml
+          target: "/opt/booking_seat"
       - name: Executing remote ssh commands to deploy
         uses: appleboy/ssh-action@master
         with:
@@ -148,7 +135,7 @@ jobs:
           password: ${{ secrets.PASSWORD }}
           script: |
             set -e
-            cd booking_app/infra
+            cd /opt/booking_seat/infra
             [ -f .env ]
             read_env_var() {
               grep -E "^$1=" .env | tail -n 1 | cut -d= -f2-

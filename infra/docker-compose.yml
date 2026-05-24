@@ -62,7 +62,6 @@ services:
       PYTHONPATH: /app/src
       POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
       RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
-      PYTHONPATH: /app/src   # ДОБАВИТЬ
     depends_on:
       db:
         condition: service_healthy
@@ -89,7 +88,6 @@ services:
       PYTHONPATH: /app/src
       POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
       RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
-      PYTHONPATH: /app/src   # ДОБАВИТЬ
     depends_on:
       db:
         condition: service_healthy
@@ -111,7 +109,6 @@ services:
       PYTHONPATH: /app/src
       POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
       RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
-      PYTHONPATH: /app/src   # ДОБАВИТЬ
     depends_on:
       db:
         condition: service_healthy
@@ -140,7 +137,6 @@ services:
       PYTHONPATH: /app/src
       POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
       RABBITMQ_HOST: ${DOCKER_RABBITMQ_HOST}
-      PYTHONPATH: /app/src   # ДОБАВИТЬ
     ports:
       - "${FLOWER_PORT}:${FLOWER_PORT}"
     depends_on:

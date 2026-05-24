@@ -1,24 +1,6 @@
 name: booking-cafe-backend
 
 services:
-  caddy:
-    image: caddy:2-alpine
-    env_file:
-      - ./.env
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      app:
-        condition: service_started
-    networks:
-      - backend
-    restart: unless-stopped
-
   db:
     image: postgres:17-alpine
     env_file:
@@ -79,6 +61,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    ports:
+      - "127.0.0.1:8001:${APP_PORT}"
     volumes:
       - ./media:/app/media
     networks:
@@ -149,8 +133,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  caddy_data:
-  caddy_config:
   pgdata:
   rabbitmq_data:
 
